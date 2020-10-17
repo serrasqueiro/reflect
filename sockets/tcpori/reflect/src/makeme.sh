@@ -35,3 +35,6 @@ DEBUG=-DDEBUG
 [ "$NO" ] && DEBUG=""
 gcc -g -Wall -o basic_reflect basic_reflect.c $DEBUG
 
+gcc -Wall -o reflector reflector.c
+
+
