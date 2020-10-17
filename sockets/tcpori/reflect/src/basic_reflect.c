@@ -20,36 +20,40 @@
 #include <stdlib.h>
 
 /*#define DEBUG */
+#include "debug.h"
+
+/* Define (below) if you want to kill the client connection using Ctrl-C */
+/* #define USE_TELNET_CTRL_C */
 
 #define LISTENQUEUESIZE 5
-
-#define PROXY_HOST_ADDR "192.168.1.254"
-#define SERVER_TCP_PORT 8088
-#define PROXY_TCP_PORT 8080
-
 #define MAXBUFFER 32768
 
-typedef unsigned int t_int;
-typedef unsigned long int t_long;
+#define PROXY_HOST_ADDR_STR "192.168.1.254"
+#define SERVER_PORT 8088
+#define PROXY_PORT 8080
 
-t_long allowedClient[]=
-{
-   3029217081UL, // me
-   3029225250UL, // hm
-   0
-};
+typedef unsigned char t_uint8;
+typedef unsigned int t_uint;
+typedef unsigned long int t_ulong;
 
 static char m_proxyHostAddr[512];
+static int serverSocketId = -1;
+static int serverPort = SERVER_PORT;
+static int proxyPort = PROXY_PORT;
 
+char buf_shown[4096];
 const char* errorMsg="<BODY><H2>You are not allowed to use this \
 service...</H2></BODY>\n\n";
-
-int serverSocketId;
 
 
 void usage(void)
 {
-    printf("basic_reflect proxy-host [port]\n");
+    printf("basic_reflect [[proxy-host [remote-proxy-port] [bind-port]]]\n\
+\n\
+Examples:\n\
+	192.168.1.254 80 8088\n\
+		-> redirects to port 80 of 192.168.1.254, binds on local port 8088\n\
+");
     exit(0);
 }
 
@@ -57,23 +61,18 @@ void usage(void)
 void faultHandler(int data)
 {
     close(serverSocketId);
-
-#ifdef DEBUG
-    printf("Server bailing out\n");
-#endif
-
+    fprintf(stderr, "Server bailing out\n");
     exit(0);
 }
 
 int writebuffer(int sock, char* buffer, int count)
 {
-   register const char *ptr = (const char *) buffer;
+   register const char *ptr = (const char *)buffer;
    register int bytesleft = count;
 
    do
    {
       register int rc;
-
       do
       {
          rc = write(sock, ptr, bytesleft);
@@ -94,24 +93,20 @@ int writebuffer(int sock, char* buffer, int count)
 
 void manageConnection(int clientSocketId)
 {
-#ifdef DEBUG
-   printf("new connectionManager for socket %d\n", clientSocketId);
-#endif
-
+   dprint("new connectionManager for socket %d\n", clientSocketId);
    {
+      int selectResult;
       int proxySocketId;
       int readByteCount;
-      char buffer[MAXBUFFER+1];
+      t_uint8 buffer[MAXBUFFER+1];
       struct sockaddr_in proxyAddressData;
       fd_set readfds;
       fd_set writefds;
-      int selectResult;
 
       memset((char*)&proxyAddressData, 0, sizeof(proxyAddressData));
       proxyAddressData.sin_family = AF_INET;
-      proxyAddressData.sin_addr.s_addr = inet_addr(PROXY_HOST_ADDR);
-      /* proxyAddressData.sin_addr.s_addr = 3263864451UL; */
-      proxyAddressData.sin_port = htons(PROXY_TCP_PORT);
+      proxyAddressData.sin_addr.s_addr = inet_addr(m_proxyHostAddr);
+      proxyAddressData.sin_port = htons(proxyPort);
       if ((proxySocketId = socket(AF_INET, SOCK_STREAM, 0)) < 0)
       {
          perror("thread: can't open stream socket to proxy");
@@ -119,12 +114,9 @@ void manageConnection(int clientSocketId)
          return;
       }
 
-#ifdef DEBUG
-      printf("proxy socket OK.\n");
-#endif
+      dprint("proxy socket OK.\n");
 
-      if (connect(proxySocketId, (struct sockaddr*) &proxyAddressData, 
-sizeof(proxyAddressData)) < 0)
+      if (connect(proxySocketId, (struct sockaddr*) &proxyAddressData, sizeof(proxyAddressData)) < 0)
       {
          perror("thread: can't connect to proxy");
          close(clientSocketId);
@@ -132,9 +124,7 @@ sizeof(proxyAddressData)) < 0)
          return;
       }
 
-#ifdef DEBUG
-      printf("thread: connected to proxy\n");
-#endif
+      dprint("thread: connected to proxy\n");
 
       while (1)
       {
@@ -149,24 +139,45 @@ sizeof(proxyAddressData)) < 0)
 
          if (selectResult < 0)   // oops
          {
-            break;
+	    dprint("select failed\n");
+	    break;
          }
 
          if (FD_ISSET(clientSocketId, &readfds))
          {
-#ifdef DEBUG
-            printf("reading from client, writing to proxy\n");
+            dprint("reading from client, writing to proxy\n");
+            readByteCount = read(clientSocketId, (char*)buffer, MAXBUFFER);
+	    if (readByteCount == 5)
+	    {
+		sprintf(buf_shown, "0x%02x%02x%02x%02x%02x",
+			buffer[0],
+			buffer[1],
+			buffer[2],
+			buffer[3],
+			buffer[4]);
+		dprint("did read from client (%d): %s, writing to proxy\n",
+		       readByteCount,
+		       buf_shown);
+	    }
+	    else
+	    {
+		buf_shown[0] = 0;
+		dprint("did read from client (%d), writing to proxy\n",
+		       readByteCount);
+	    }
+#ifdef USE_TELNET_CTRL_C
+	    if (strcmp(buf_shown, "0xfff4fffd06")==0)
+	    {
+	       /* Detected Ctrl-C on telnet */
+	       break;
+	    }
 #endif
-
-            readByteCount = read(clientSocketId, buffer, MAXBUFFER);
             if (readByteCount <= 0)
             {
                /*perror("thread: read error from client");*/
                break;
             }
-
-            if (writebuffer(proxySocketId, buffer, readByteCount) != 
-readByteCount)
+            if (writebuffer(proxySocketId, (char*)buffer, readByteCount) != readByteCount)
             {
                perror("thread: write error to proxy");
                break;
@@ -175,19 +186,16 @@ readByteCount)
 
          if (FD_ISSET(proxySocketId, &readfds))
          {
-#ifdef DEBUG
-            printf("reading from proxy, writing to client\n");
-#endif
-
+	    dprint("reading from proxy, writing to client\n");
             readByteCount = read(proxySocketId, buffer, MAXBUFFER);
+            dprint("did read from proxy, writing to client (%d), writing to proxy\n", readByteCount);
             if (readByteCount <= 0)
             {
                /*perror("thread: read error from proxy");*/
                break;
             }
 
-            if (writebuffer(clientSocketId, buffer, readByteCount) != 
-readByteCount)
+            if (writebuffer(clientSocketId, (char*)buffer, readByteCount) != readByteCount)
             {
                perror("thread: write error to client");
                break;
@@ -199,85 +207,58 @@ readByteCount)
       close(clientSocketId);
    }
 
-#ifdef DEBUG
-   printf("connectionManager for socket %d ended\n", clientSocketId);
-#endif
+   dprint("connectionManager for socket %d ended\n", clientSocketId);
 }
 
-int check_client(unsigned char b1, unsigned char b2, unsigned char b3, 
-unsigned char b4)
+
+int check_client(struct sockaddr_in* sa)
 {
-   int i;
-   t_long clientAddr = b1<<24|b2<<16|b3<<8|b4;
-   int lastidx = sizeof(allowedClient)/sizeof(t_long);
-
-   for(i=0; i<lastidx; i++)
-   {
-      if (clientAddr == allowedClient[i])
-         return 1;
-   }
-
-   return 0;
+   char str[32];
+   inet_ntop(AF_INET, &(sa->sin_addr), str, INET_ADDRSTRLEN);
+   dprint("Accessed %s:%d from: %s\n", m_proxyHostAddr, proxyPort, str);
+   return 1;
 }
 
-void setup_suicide()
-{
-   int timeToDie;
-   int mult;
-   char* aString = getpass("Suicide timeout (Xs-secs, Xm-mins, Xh-hours): \n\
-");
 
-   switch(aString[strlen(aString)-1])
-   {
-      case 's':
-         mult = 1;
-         break;
-      case 'm':
-         mult = 60;
-         break;
-      case 'h':
-         mult = 3600;
-         break;
-      default:
-         mult = 0;
-         break;
-   }
-
-   aString[strlen(aString)-1] = 0;
-   timeToDie = atoi(aString) * mult;
-   printf("Dying in %d seconds...\n", timeToDie);
-   alarm(timeToDie);
-}
-
-/* main function */
+/* --------------------------------
+   main function
+   --------------------------------
+*/
 int main(int argc, char* argv[])
 {
    struct sockaddr_in serverAddressData;
-   int serverPort = SERVER_TCP_PORT;
 
-   strcpy(m_proxyHostAddr, PROXY_HOST_ADDR);
+   strcpy(m_proxyHostAddr, PROXY_HOST_ADDR_STR);
 
+   if (argc > 4)
+   {
+       usage();
+   }
    if (argc > 1)
    {
-       if (argc > 3)
+       strcpy(m_proxyHostAddr, argv[1]);
+       if (m_proxyHostAddr[0] <= '-')
        {
 	   usage();
        }
 
-       strcpy(m_proxyHostAddr, argv[1]);
-       
        if (argv[2])
        {
-	   serverPort = atoi(argv[2]);
-	   if (serverPort <= 0 || serverPort > 65535)
+	   proxyPort = atoi(argv[2]);
+	   if (argv[3])
 	   {
-	       printf("Invalid server port: %d ('%s')\n\n",
-		      serverPort,
-		      argv[2]);
-	       usage();
+	       serverPort = atoi(argv[3]);
 	   }
        }
    }
+   if (serverPort <= 0 || serverPort > 65535)
+   {
+       printf("Invalid bind (server) port: %d ('%s')\n\n",
+	      serverPort,
+	      argv[3]);
+       usage();
+   }
+
    if ((serverSocketId = socket(AF_INET, SOCK_STREAM, 0)) < 0)
    {
       perror("server: can't open stream socket");
@@ -285,29 +266,30 @@ int main(int argc, char* argv[])
    }
 
    memset((char*)&serverAddressData, 0, sizeof(serverAddressData));
-
    serverAddressData.sin_family = AF_INET;
    serverAddressData.sin_addr.s_addr = htonl(INADDR_ANY);
    serverAddressData.sin_port = htons(serverPort);
 
+   dprint("serverPort=%d, proxy host: %s, proxyPort=%d\n",
+	  serverPort,
+	  m_proxyHostAddr,
+	  proxyPort);
    {
       int serverSocketOptional = 1;
-      setsockopt(serverSocketId, SOL_SOCKET, SO_REUSEADDR, 
-(char*)&serverSocketOptional, sizeof(int));
+      setsockopt(serverSocketId,
+		 SOL_SOCKET,
+		 SO_REUSEADDR,
+		 (char*)&serverSocketOptional, sizeof(int));
    }
 
-   if (bind(serverSocketId, (struct sockaddr *)&serverAddressData, 
-sizeof(serverAddressData)) < 0)
+   if (bind(serverSocketId, (struct sockaddr *)&serverAddressData, sizeof(serverAddressData)) < 0)
    {
       perror("server: can't bind local address");
       close(serverSocketId);
       return 1;
    }
 
-#ifdef DEBUG
-   printf("bind OK.\n");
-#endif
-
+   dprint("bind OK.\n");
    if (listen(serverSocketId, LISTENQUEUESIZE))
    {
       close(serverSocketId);
@@ -331,37 +313,21 @@ sizeof(serverAddressData)) < 0)
       int clientAddressDataLength = sizeof(clientAddressData);
       int clientSocketId = accept(serverSocketId,
 				  (struct sockaddr*)&clientAddressData,
-				  (t_int*)&clientAddressDataLength);
+				  (t_uint*)&clientAddressDataLength);
 
-#ifdef CHECK_CLIENT
-#ifdef DEBUG
-      printf("accept OK.(%d.%d.%d.%d)\n",
-               clientAddressData.sin_addr.S_un.S_un_b.s_b1,
-               clientAddressData.sin_addr.S_un.S_un_b.s_b2,
-               clientAddressData.sin_addr.S_un.S_un_b.s_b3,
-               clientAddressData.sin_addr.S_un.S_un_b.s_b4);
-#endif
-
-      if (!check_client(clientAddressData.sin_addr.S_un.S_un_b.s_b1,
-			clientAddressData.sin_addr.S_un.S_un_b.s_b2,
-			clientAddressData.sin_addr.S_un.S_un_b.s_b3,
-			clientAddressData.sin_addr.S_un.S_un_b.s_b4))
+      if (!check_client(&clientAddressData))
       {
          write(clientSocketId, errorMsg, strlen(errorMsg));
          close(clientSocketId);
          continue;
       }
-#endif /* CHECK_CLIENT */
 
       if (clientSocketId < 0) // oops
       {
          continue;
       }
 
-#ifdef DEBUG
-         printf("Creating child for socket %d\n", clientSocketId);
-#endif
-
+      dprint("Creating child for socket %d\n", clientSocketId);
       {
          int childPid;
 
@@ -382,4 +348,3 @@ sizeof(serverAddressData)) < 0)
       }
    }
 }
-
