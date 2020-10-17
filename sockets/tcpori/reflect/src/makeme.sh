@@ -33,8 +33,9 @@ $0
 
 DEBUG=-DDEBUG
 [ "$NO" ] && DEBUG=""
+
+# last tested ok with:	gcc (SUSE Linux) 10.2.1 20200825
 gcc -g -Wall -o basic_reflect basic_reflect.c $DEBUG
 
-gcc -Wall -o reflector reflector.c
-
+gcc -Wall -Werror -o reflector reflector.c
 

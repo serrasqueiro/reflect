@@ -22,6 +22,7 @@
 
 /*#define DEBUG */
 #include "debug.h"
+#include "reflog.h"
 
 #define PROGRAM_NAME "reflector"
 
@@ -35,14 +36,13 @@
 #define SERVER_PORT 8088
 #define PROXY_PORT 8080
 
-typedef unsigned char t_uint8;
-typedef unsigned int t_uint;
-typedef unsigned long int t_ulong;
+#define LOG_A(args...) REFLOG_USER(PROGRAM_NAME, LOG_INFO, args)
 
 static char m_proxyHostAddr[512];
 static int serverSocketId = -1;
 static int serverPort = SERVER_PORT;
 static int proxyPort = PROXY_PORT;
+static t_stats_net netStats;
 
 char buf_shown[4096];
 const char* errorMsg="<BODY><H2>You are not allowed to use this \
@@ -63,9 +63,17 @@ Examples:\n\
 
 void faultHandler(int data)
 {
-    close(serverSocketId);
-    fprintf(stderr, "Server bailing out\n");
-    exit(0);
+   close(serverSocketId);
+   fprintf(stderr, "Server [%d]-%s:%d bailing out\n",
+	   serverPort,
+	   m_proxyHostAddr,
+	   proxyPort);
+   LOG_A("Bye-bye [%d]-%s:%d: accs/rejs.=%d/%d\n",
+	 serverPort,
+	 m_proxyHostAddr,
+	 proxyPort,
+	 netStats.accs, netStats.rejs);
+   exit(0);
 }
 
 int writebuffer(int sock, char* buffer, int count)
@@ -140,8 +148,9 @@ void manageConnection(int clientSocketId)
 
          selectResult = select(FD_SETSIZE, &readfds, &writefds, 0, 0);
 
-         if (selectResult < 0)   // oops
+         if (selectResult < 0)
          {
+	    /* Oops... select failed */
 	    dprint("select failed\n");
 	    break;
          }
@@ -180,6 +189,7 @@ void manageConnection(int clientSocketId)
                /*perror("thread: read error from client");*/
                break;
             }
+	    netStats.byteCountIngress += readByteCount;
             if (writebuffer(proxySocketId, (char*)buffer, readByteCount) != readByteCount)
             {
                perror("thread: write error to proxy");
@@ -191,6 +201,7 @@ void manageConnection(int clientSocketId)
          {
 	    dprint("reading from proxy, writing to client\n");
             readByteCount = read(proxySocketId, buffer, MAXBUFFER);
+	    netStats.byteCountEgress += readByteCount;
             dprint("did read from proxy, writing to client (%d), writing to proxy\n", readByteCount);
             if (readByteCount <= 0)
             {
@@ -211,6 +222,10 @@ void manageConnection(int clientSocketId)
    }
 
    dprint("connectionManager for socket %d ended\n", clientSocketId);
+   LOG_A("Ends fd=%d %ld/ %ld bytes",
+	 clientSocketId,
+	 netStats.byteCountIngress,
+	 netStats.byteCountEgress);
 }
 
 
@@ -225,13 +240,11 @@ int check_client(struct sockaddr_in* sa, int log_mask)
    result = 1;
    if (log_mask)
    {
-       openlog(PROGRAM_NAME, LOG_PID, LOG_USER);
-       syslog(LOG_INFO, "%s %s [%d] for %s:%d",
-	      result ? "Accepted" : "Rejected",
-	      str,
-	      serverPort,
-	      m_proxyHostAddr, proxyPort);
-       closelog();
+       LOG_A("%s %s [%d] for %s:%d",
+	     result ? "Accepted" : "Rejected",
+	     str,
+	     serverPort,
+	     m_proxyHostAddr, proxyPort);
    }
    return result;
 }
@@ -335,9 +348,11 @@ int main(int argc, char* argv[])
 
       if (check_client(&clientAddressData, log_mask))
       {
+	 netStats.accs++;
       }
       else
       {
+	 netStats.rejs++;
          write(clientSocketId, errorMsg, strlen(errorMsg));
          close(clientSocketId);
          continue;
@@ -352,19 +367,21 @@ int main(int argc, char* argv[])
       {
          int childPid;
 
-         if ((childPid = fork()) < 0)   // oops
+         if ((childPid = fork()) < 0)
          {
+	    /* Something got wrong */
             continue;
          }
 
-         if (childPid == 0) // child
+         if (childPid == 0)
          {
+	    /* Child part */
             close(serverSocketId);
             manageConnection(clientSocketId);
-            return 0;
+	    return 0;
          }
 
-         // parent
+         /* Here at the parent */
          close(clientSocketId);
       }
    }
