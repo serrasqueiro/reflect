@@ -250,6 +250,33 @@ int check_client(struct sockaddr_in* sa, int log_mask)
 }
 
 
+int convert_to_ip(char* sHost, t_uint size)
+{
+   struct hostent *hostEntry;
+   char* ipBuf;
+
+   if (sHost==NULL || strcmp(sHost, ".")==0)
+   {
+       strncpy(sHost, "localhost", size);
+       return 1;
+   }
+
+   hostEntry = gethostbyname(sHost);
+   if (hostEntry == NULL)
+   {
+       return -1;
+   }
+   ipBuf = inet_ntoa(*((struct in_addr*)hostEntry->h_addr_list[0]));
+   if (ipBuf && ipBuf[0])
+   {
+       dprint("Using IP from host %s: %s\n", sHost, ipBuf);
+       snprintf(sHost, size, "%s", ipBuf);
+       return 0;
+   }
+   return 1;
+}
+
+
 /* --------------------------------
    main function
    --------------------------------
@@ -257,6 +284,7 @@ int check_client(struct sockaddr_in* sa, int log_mask)
 int main(int argc, char* argv[])
 {
    const int log_mask = 1;
+   int code = -1;
    struct sockaddr_in serverAddressData;
 
    strcpy(m_proxyHostAddr, PROXY_HOST_ADDR_STR);
@@ -271,6 +299,18 @@ int main(int argc, char* argv[])
        if (m_proxyHostAddr[0] <= '-')
        {
 	   usage();
+       }
+
+       code = convert_to_ip(m_proxyHostAddr, sizeof(m_proxyHostAddr));
+       dprint("convert_to_ip(%s): code=%d\n", m_proxyHostAddr, code);
+       if (code)
+       {
+	   if (code < 0)
+	   {
+	       fprintf(stderr, "Could not use '%s'\n", m_proxyHostAddr);
+	       return 2;
+	   }
+	   fprintf(stderr, "Could not use '%s', assuming %s\n", argv[1], m_proxyHostAddr);
        }
 
        if (argv[2])
