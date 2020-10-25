@@ -19,8 +19,10 @@ typedef unsigned int t_uint;
 typedef unsigned long int t_ulong;
 
 typedef struct {
+    int id;
     int accs;
     int rejs;
+    int sels;
     long byteCountIngress;
     long byteCountEgress;
 } t_stats_net;
