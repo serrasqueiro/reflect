@@ -5,19 +5,20 @@
 */
 /* fork-based version */
 
-#include <signal.h>
 #include <stdio.h>
+#include <string.h>
+#include <stdlib.h>
+#include <syslog.h> /* For logging */
+#include <signal.h>
 #include <sys/types.h>
 #include <sys/socket.h>
 #include <netinet/in.h>
 #include <netdb.h>
 #include <arpa/inet.h>
-#include <string.h>
 #include <unistd.h>
 #include <fcntl.h>
 #include <errno.h>
-#include <stdlib.h>
-#include <syslog.h> /* For logging */
+#include <time.h>
 
 /*#define DEBUG */
 #include "debug.h"
@@ -82,6 +83,29 @@ ssize_t custom_read(int line, int sockfd, void *buf, size_t len, int flags)
    return bytes;
 }
 
+float saveTime(t_stats_net* stt, int op)
+{
+   static float val;
+   int diff;
+   long tm, last;
+   val = 0.0;
+   if (op==0)
+   {
+       stt->sels = 0;
+       stt->stamp = 0;
+       return val;
+   }
+   last = stt->stamp;
+   tm = (long)time(NULL);
+   diff = (int)(tm - last);
+   stt->stamp = (t_ulong)tm;
+   if (diff <= 2 && stt->sels > 10)
+   {
+       val = 1000.0 * 100.0*((stt->sels > 100) + 2*(stt->sels > 500));
+   }
+   return val;
+}
+
 
 void faultHandler(int data)
 {
@@ -128,6 +152,7 @@ void manageConnection(int clientSocketId)
 {
    const int nfds = FD_SETSIZE;
    struct timeval timeVal;
+   float uSleep;
    timeVal.tv_sec = 5;  // 5 secs.
    timeVal.tv_usec = 0;
 
@@ -242,6 +267,8 @@ void manageConnection(int clientSocketId)
                perror("thread: write error to proxy");
                break;
             }
+	    saveTime(&netStats, 0);
+	    continue;
          }
 
          if (FD_ISSET(proxySocketId, &readfds))
@@ -262,6 +289,17 @@ void manageConnection(int clientSocketId)
                perror("thread: write error to client");
                break;
             }
+	    saveTime(&netStats, 0);
+	    continue;
+         }
+
+         uSleep = saveTime(&netStats, 1);
+         if (uSleep > 1000.0)
+         {
+	     dprint("Sleeping %0.0fms sels=%d (pid: %u)\n",
+		    uSleep / 1000.0,
+		    netStats.sels, getpid());
+	     usleep((t_uint)uSleep);
          }
       }
 
@@ -335,6 +373,7 @@ int main(int argc, char* argv[])
    const int log_mask = 1;
    int code = -1;
    struct sockaddr_in serverAddressData;
+   struct sockaddr_in clientAddressData;
 
    strcpy(m_proxyHostAddr, PROXY_HOST_ADDR_STR);
 
@@ -429,7 +468,6 @@ int main(int argc, char* argv[])
 
    while (1)
    {
-      struct sockaddr_in clientAddressData;
       int clientAddressDataLength = sizeof(clientAddressData);
       int clientSocketId = accept(serverSocketId,
                                   (struct sockaddr*)&clientAddressData,

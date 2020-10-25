@@ -25,6 +25,7 @@ typedef struct {
     int sels;
     long byteCountIngress;
     long byteCountEgress;
+    t_ulong stamp;
 } t_stats_net;
 
 
