@@ -25,6 +25,7 @@
 #include "reflog.h"
 
 #define PROGRAM_NAME "reflector"
+#define VERSION "1.00 02"
 
 /* Define (below) if you want to kill the client connection using Ctrl-C */
 /* #define USE_TELNET_CTRL_C */
@@ -55,7 +56,9 @@ service...</H2></BODY>\n\n";
 
 void usage(void)
 {
-    printf("basic_reflect [[proxy-host [remote-proxy-port] [bind-port]]]\n\
+    printf("reflector [[proxy-host [remote-proxy-port] [bind-port]]]\n\
+\n\
+Version: " VERSION "\n\
 \n\
 Examples:\n\
     192.168.1.254 80 8088\n\
