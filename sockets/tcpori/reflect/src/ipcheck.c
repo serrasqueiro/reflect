@@ -9,8 +9,11 @@
 #include <stdlib.h>
 #include <sys/socket.h>
 #include <arpa/inet.h>
+#include <assert.h>
 
 #include "ipcheck.h"
+
+#define MAX_IPCHECK_ENTRIES	4096
 
 
 /* --------------------------------
@@ -22,10 +25,61 @@
 */
 
 
+void init_allowed (t_allowed* dbcheck)
+{
+   dbcheck->n = 0;
+   dbcheck->list.start = dbcheck->list.last = NULL;
+}
+
+void delete_allowed (t_allowed* dbcheck)
+{
+   auth_node* ptr;
+   auth_node* stt = dbcheck->list.start;
+   auth_node* now;
+   char* comment = NULL;
+
+   assert(comment == NULL);
+   if (stt == NULL) {
+       return;
+   }
+   for (ptr=stt; ptr; ) {
+       now = ptr->next;
+       comment = ptr->item.comment;
+       dprint("Debug: deleting %s/%u%s%s\n",
+	      ptr->item.str_ip,
+	      ptr->item.CIDR,
+	      comment[0] ? " comment: " : "",
+	      comment);
+       free(ptr);
+       ptr = now;
+   }
+   dbcheck->n = 0;
+}
+
+void dump_allowed (FILE* fOut, t_allowed* dbcheck)
+{
+   char* comment;
+   auth_node* ptr = dbcheck->list.start;
+   for ( ; ptr; ptr=ptr->next) {
+       comment = ptr->item.comment;
+       fprintf(fOut, "%s/%u%s%s\n",
+	       ptr->item.str_ip,
+	       ptr->item.CIDR,
+	       comment[0] ? " #comment: " : "",
+	       comment);
+   }
+}
+
+
 int add_node (list_auth_nodes* nodes, auth_node* aNode) {
    if (!aNode) {
        return -1;
    }
+   dprint("add_node() str_ip='%s', CIDR=%d; start=%p, last=%p\n",
+	  aNode->item.str_ip,
+	  aNode->item.CIDR,
+	  nodes->start,
+	  nodes->last);
    if (aNode->next) {
        return -2;
    }
@@ -43,17 +97,34 @@ int add_node (list_auth_nodes* nodes, auth_node* aNode) {
    return 0;
 }
 
+in_addr_t netmask (int prefix) {
+   if (prefix<=0)
+       return ~((in_addr_t)-1);
+    return ~((1 << (32 - prefix)) - 1);
+}
 
-int read_ipcheck (const char* path, t_allowed* dbcheck) {
+in_addr_t whatmask (int prefix) {
+   if (prefix<=0)
+       return (in_addr_t)-1;
+    return (1 << (32 - prefix)) - 1;
+}
+
+int read_ipcheck (FILE* fErr, const char* path, t_allowed* dbcheck) {
    const char* cidr;
    struct sockaddr_in sa;
    FILE* fd;
    char buf[256];
+   char comment[256];
    char* ptr;
    char* ip;
+   int line = 0, errors = 0;
    int len, code;
+   int iCIDR = -1;
    t_uint size = 0;
    auth_node* aNode;
+   t_allowed local;
+
+   init_allowed(&local);
 
    if (!dbcheck) return -1;
    fd = fopen(path, "r");
@@ -61,14 +132,41 @@ int read_ipcheck (const char* path, t_allowed* dbcheck) {
        return 2;
    }
 
-   dbcheck->n = 0;
+   local.n = 0;
    while (fgets(buf, sizeof(buf), fd)) {
+       errors = 0;
+       comment[0] = 0;
+       line++;
        len = strlen(buf);
        if (len <= 0 || buf[0] == '#') {
 	   continue;
        }
        if (buf[len-1]<=' ') {
 	   buf[len-1] = 0;
+       }
+       /* Check line char is not weird! */
+       for (ptr=buf; *ptr; ptr++) {
+	   if (*ptr == '\t') {
+	       *ptr = ' ';
+	   }
+	   else {
+	       if (*ptr < ' ' || *ptr > '~') {
+		   eprint(fErr, "Line %d: Invalid char (0x%08x)\n",
+			  line,
+			  (unsigned)*ptr);
+		   errors++;
+		   break;
+	       }
+	   }
+       }
+       ptr = strchr(buf, '#');
+       if (ptr) {
+	   *ptr = '\0';
+	   for (ptr++; *ptr; ptr++) {
+	       if (*ptr > ' ')
+		   break;
+	   }
+	   snprintf(comment, sizeof(comment), ptr);
        }
        ip = buf;
        ptr = strchr(buf, '/');
@@ -84,17 +182,36 @@ int read_ipcheck (const char* path, t_allowed* dbcheck) {
 	      code,
 	      buf, ip, cidr,
 	      inet_ntoa(sa.sin_addr));
+       iCIDR = atoi(cidr);
        if (code >= 1) {
 	   aNode = (auth_node*)calloc(1, sizeof(auth_node));
 	   snprintf(aNode->item.str_ip, sizeof(ip_string), ip);
-	   aNode->item.CIDR = atoi(cidr);
-	   code = add_node(&(dbcheck->list), aNode);
-	   dbcheck->n++;
+	   aNode->item.CIDR = iCIDR;
+	   strcpy(aNode->item.comment, comment);
+	   add_node(&(local.list), aNode);
+	   local.n++;
+	   dprint("Node #%d: str_ip='%s', CIDR=%d\n",
+		  local.n,
+		  aNode->item.str_ip,
+		  aNode->item.CIDR);
+	   if (iCIDR < 1 || iCIDR > 32) {
+	       eprint(fErr, "Invalid CIDR: %s\n", cidr);
+	       errors++;
+	   }
+       }
+       else {
+	   eprint(fErr, "Invalid IP: %s\n", ip);
+	   errors++;
        }
    }
    fclose(fd);
+   if (errors) {
+       eprint(fErr, "Errors found (%d): %s\n", errors, path);
+       return 3;
+   }
+
    /* Calculate number of entries */
-   for (aNode=dbcheck->list.start; aNode; aNode=aNode->next) {
+   for (aNode=local.list.start; aNode; aNode=aNode->next) {
        t_uint this = aNode->item.CIDR;
        t_uint idx = this, pwr = 1;
        for ( ; idx < 32; idx++) {
@@ -102,9 +219,38 @@ int read_ipcheck (const char* path, t_allowed* dbcheck) {
        }
        size += pwr;
        dprint("aNode %p (n=%d), pwr=%d (size=%u): %s/%u\n",
-	      aNode, dbcheck->n, pwr, size,
+	      aNode, local.n, pwr, size,
 	      aNode->item.str_ip, this);
    }
+   if (size >= MAX_IPCHECK_ENTRIES) {
+       eprint(fErr, "Too many IPs defined: %u, max. is: %u\n",
+	      size,
+	      MAX_IPCHECK_ENTRIES);
+       return 4;
+   }
+   /* Add all IPs to dbcheck */
+   for (aNode=local.list.start; aNode; aNode=aNode->next) {
+       char* nowIP;
+       t_uint this = aNode->item.CIDR;
+       t_uint pfix = 32;
+       struct in_addr in;
+       for ( ; pfix >= this; pfix--) {
+	   auth_node* newNode = (auth_node*)calloc(1, sizeof(auth_node));
+	   ip = aNode->item.str_ip;
+	   strcpy(newNode->item.str_ip, ip);
+	   strcpy(newNode->item.comment, aNode->item.comment);
+	   inet_pton(AF_INET, ip, &in);
+	   nowIP = inet_ntoa(in);
+	   printf("IP=%s/%d - %s, prefix %d (n#=%d): %08X\n",
+		  ip, this,
+		  nowIP,
+		  pfix, dbcheck->n,
+		  (unsigned)whatmask(pfix));
+	   add_node(&(dbcheck->list), newNode);
+	   dbcheck->n++;
+       }
+   }
+   delete_allowed(&local);
    return 0;
 }
 
@@ -113,15 +259,20 @@ int read_ipcheck (const char* path, t_allowed* dbcheck) {
 int main(int argc, char* argv[]) {
    const char* def_ipcheck_path = "/tmp/root/ipcheck.txu";
    char* ipcheck = (char*)def_ipcheck_path;
+   FILE* fErr = stderr;
    int code;
    t_allowed aDbCheck;
+
+   init_allowed(&aDbCheck);
 
    if (argv[1]) {
        ipcheck = argv[1];
    }
    printf("ipcheck file: %s\n", ipcheck);
-   code = read_ipcheck(ipcheck, &aDbCheck);
+   code = read_ipcheck(fErr, ipcheck, &aDbCheck);
    printf("read_ipcheck(%s, &aDbCheck) returned %d\n", ipcheck, code);
+   dump_allowed(stdout, &aDbCheck);
+   delete_allowed(&aDbCheck);
    return 0;
 }
 #endif /* DEBUG_TEST */

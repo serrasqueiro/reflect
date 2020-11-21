@@ -10,6 +10,8 @@
 #include "debug.h"
 #include "reflog.h"
 
+#define eprint(fErr, args...) if (fErr) { fprintf(fErr, args); }
+
 
 typedef struct {
     char str_host[256];
@@ -29,8 +31,8 @@ typedef struct _p_node {
 } auth_node;
 
 typedef struct {
-    struct _p_node* start;
-    struct _p_node* last;
+    auth_node* start;
+    auth_node* last;
 } list_auth_nodes;
 
 typedef struct {
