@@ -37,5 +37,7 @@ DEBUG=-DDEBUG
 # last tested ok with:	gcc (SUSE Linux) 10.2.1 20200825
 [ "$DO_BASIC" ] && gcc -g -Wall -o basic_reflect basic_reflect.c $DEBUG
 
-gcc -g -Wall -Werror -o reflector reflector.c
+#gcc -g -Wall -Werror -o reflector reflector.c
+
+gcc -Wall ipcheck.c -o ipcheck -DDEBUG_TEST -DDEBUG
 

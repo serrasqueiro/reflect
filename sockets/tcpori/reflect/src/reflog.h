@@ -1,6 +1,6 @@
 /* reflog.h -- part of reflect/src
 
-   (c)2000 Henrique Moreira
+   (c)2020 Henrique Moreira
 
 */
 
@@ -18,6 +18,8 @@ typedef unsigned char t_uint8;
 typedef unsigned int t_uint;
 typedef unsigned long int t_ulong;
 
+typedef char ip_string[32];
+
 typedef struct {
     int id;
     int accs;
@@ -27,6 +29,5 @@ typedef struct {
     long byteCountEgress;
     t_ulong stamp;
 } t_stats_net;
-
 
 #endif /* REFLOG_X_H */
