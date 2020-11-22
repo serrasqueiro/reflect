@@ -24,7 +24,32 @@
 	gcc -Wall ipcheck.c -g -o ipcheck_test -DDEBUG_TEST -DDEBUG
 */
 
+int new_ip_cidr (const char* ipcheck, char** new_ip, char** new_cidr) {
+   char* ptr;
+   char* str;
+   char* ip;
+   char* cidr;
+   assert(ipcheck);
+   str = strdup(ipcheck);
+   ptr = strchr(str, '/');
+   if (ptr) {
+       cidr = strdup(ptr+1);
+       ptr[0] = 0;
+   }
+   else {
+       cidr = strdup("32");
+   }
+   ip = strdup(str);
+   *new_ip = ip;
+   *new_cidr = cidr;
+   free(str);
+   return 0;
+}
 
+
+/* t_allowed ops.
+   --------------
+*/
 void init_allowed (t_allowed* dbcheck)
 {
    dbcheck->n = 0;
@@ -256,6 +281,19 @@ int read_ipcheck (FILE* fErr, const char* path, t_allowed* dbcheck) {
 
 
 #ifdef DEBUG_TEST
+
+int test_ip_iterate (const char* ipcheck)
+{
+   char* ip;
+   char* cidr;
+
+   new_ip_cidr(ipcheck, &ip, &cidr);
+   dprint("ip=%s, CIDR=%s\n", ip, cidr);
+   free(ip);
+   free(cidr);
+   return 0;
+}
+
 int main(int argc, char* argv[]) {
    const char* def_ipcheck_path = "/tmp/root/ipcheck.txu";
    char* ipcheck = (char*)def_ipcheck_path;
@@ -267,6 +305,12 @@ int main(int argc, char* argv[]) {
 
    if (argv[1]) {
        ipcheck = argv[1];
+       if (ipcheck[0] == '@') {
+	   ipcheck++;
+	   code = test_ip_iterate(ipcheck);
+	   printf("test_ip_iterate(%s) returned %d\n", ipcheck, code);
+	   return code;
+       }
    }
    printf("ipcheck file: %s\n", ipcheck);
    code = read_ipcheck(fErr, ipcheck, &aDbCheck);
