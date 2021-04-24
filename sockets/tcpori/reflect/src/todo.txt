@@ -1,0 +1,14 @@
+
+% ./basic_reflect 192.168.1.20 80 8088
+
+% gcc -Wall -o reflector reflector.c
+% ./reflector 192.168.1.9 22 8022
+
+reflector xperteleven.com 80 8088
+
+
+CMD="gcc -Wall ipcheck.c -g -o ipcheck_test -DDEBUG_TEST -DDEBUG"
+$CMD
+./ipcheck_test sample.txu
+
+
