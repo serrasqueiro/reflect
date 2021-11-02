@@ -1,0 +1,45 @@
+at 'reflect' branch new/my_dev
+
+https://linuxhint.com/send_receive_udp_python/
+
+henrique@ludo:~> bpython
+bpython version 0.19 on top of Python 3.8.3 /usr/bin/python3
+>>> import sys, socket
+>>> skt = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+>>> binder = skt.bind(("192.168.1.9", 8000)
+... )
+>>> import time
+>>> sleep(0.5)
+Traceback (most recent call last):
+  File "<input>", line 1, in <module>
+    sleep(0.5)
+NameError: name 'sleep' is not defined
+>>> time.sleep(0.5)
+>>> data, address = skt.recvfrom(1024)
+>>> data
+b'one\n'
+>>> address
+('192.168.1.9', 40975)
+>>> skt.sendto(send_data.encode("ascii"), address)
+Traceback (most recent call last):
+  File "<input>", line 1, in <module>
+    skt.sendto(send_data.encode("ascii"), address)
+NameError: name 'send_data' is not defined
+>>> send_data = b'Adeus'
+>>> skt.sendto(send_data.encode("ascii"), address)
+Traceback (most recent call last):
+  File "<input>", line 1, in <module>
+    skt.sendto(send_data.encode("ascii"), address)
+AttributeError: 'bytes' object has no attribute 'encode'
+>>> skt.sendto(send_data, address)
+5
+>>> data, address = skt.recvfrom(1024)
+>>> skt.sendto(send_data, address)
+5
+>>> data, address = skt.recvfrom(1024)
+>>> print(data)
+b'two\n'
+>>> print(data, address)
+b'two\n' ('192.168.1.9', 48224)
+
+
