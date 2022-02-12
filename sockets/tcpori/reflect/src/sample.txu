@@ -1,0 +1,6 @@
+# local network 192.168.1.1 to 192.168.1.255
+192.168.1.0/24	# my private IPs (192 network!)
+# other local private network, 10:
+10.0.0.0/24
+# One particular IP address allowed:
+172.16.1.254
