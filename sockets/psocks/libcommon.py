@@ -40,12 +40,14 @@ class NiceClient(NiceHost):
         super().__init__(addr, name)
         self.sock = None
 
-    def shutdown(self) -> bool:
+    def closedown(self):
         """ Shutdown socket
         """
         if self.sock is None:
             return False
-        self.sock.shutdown(socket.SHUT_RDWR)
+        #self.sock.shutdown(socket.SHUT_RDWR)
+        self.sock.close()
+        del self.sock
         self.sock = None
         return True
 

@@ -3,6 +3,7 @@
 # pylint: disable=missing-function-docstring
 
 import sys
+import time
 import socket
 import psocks.libserver as libserver
 import psocks.libcommon
@@ -10,8 +11,6 @@ from psocks.libcommon import dprint, NiceHost, NiceClient
 
 DEBUG = 1
 DEFAULT_PORT = 5000
-
-ctrl = libserver.Control()
 
 
 def main():
@@ -32,15 +31,17 @@ def run_server(args):
     if len(param) != 2:
         return None
     host, port = param[0], int(param[1])
+    ctrl = libserver.Control()
     dprint(f"Starting server {host}:{port}", end=" ...")
-    is_ok = do_listen((host, port))
+    is_ok = do_listen(ctrl, (host, port))
     if not is_ok:
         print(f"Failed to listen: {host}:{port}")
+    del ctrl
     return 0
 
-def do_listen(addr: tuple):
+def do_listen(ctrl, addr: tuple):
     host, port = addr
-    nclient = NiceClient()
+    status = "INI"
     lsock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     lsock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
     #print("Binding socket...", addr)
@@ -48,7 +49,7 @@ def do_listen(addr: tuple):
         lsock.bind(addr)
     except OSError as os_error:
         ctrl.hint = os_error
-        dprint(hint, ":::", type(hint))
+        dprint(ctrl.hint, ":::", type(ctrl.hint))
         return False
     lsock.listen()
     dprint(f"Listening at {host}:{port}", end="\n\n")
@@ -56,34 +57,42 @@ def do_listen(addr: tuple):
     lsock.setblocking(False)
     ctrl.register(lsock, libserver.EV_READ, data=None)
     #sel.register(lsock, selectors.EVENT_READ, data=None)
+    nclient = None
 
     try:
-        while True:
-            dprint("select()", nclient)
+        while status == "INI":
+            if not ctrl.is_server_up():
+                break
+            dprint("select()", NiceHost(addr))
             events = ctrl.sel.select(timeout=None)
             for key, mask in events:
                 if key.data is None:
-                    new_client = accept_wrapper(key.fileobj)
-                    nclient = new_client
-                else:
-                    dealt = service_connection(key, mask, addr)
-                    dprint(f"key.data.outb {nclient}:", key.data.outb)
-                    finito = dealt.endswith(".\n")
-                    shown = dealt.replace("\n", "\\n")
-                    print(f"::: {nclient} done? {finito}\n" + shown, end="<<<\n\n")
-                    if finito:
-                        dprint(f"Closed select for client: {nclient}")
-                        is_ok = nclient.shutdown()
-                        break
+                    new_client = accept_wrapper(ctrl, key.fileobj)
+                    _, nclient = ctrl.register_client(new_client)
+                    continue
+                if nclient is None:
+                    time.sleep(1)
+                    continue
+                dealt = service_connection(ctrl, key, mask, addr)
+                dprint(f"key.data.outb {nclient}:", key.data.outb)
+                finito = dealt.endswith(".\n")
+                shown = dealt.replace("\n", "\\n")
+                print(f"::: {nclient} done? {finito}\n" + shown, end="<<<\n\n")
+                if finito:
+                    dprint(f"Closed select for client: {nclient}")
+                    is_ok = ctrl.closedown_last()
+                    assert is_ok, f"Failed to close {nclient}"
+                    status = "OUT"
+                    break
     except KeyboardInterrupt:
         print("\n... Caught keyboard interrupt, exiting")
     finally:
         dprint("Closing select()")
-        ctrl.sel.close()
+        ctrl.server_shutdown()
     return True
 
 
-def accept_wrapper(sock):
+def accept_wrapper(ctrl, sock):
     """ TCP socket accept wrapper """
     conn, addr = sock.accept()  # Should be ready to read
     print(f"Accepted connection from {NiceHost(addr)}")
@@ -96,7 +105,7 @@ def accept_wrapper(sock):
     return new_client
 
 
-def service_connection(key, mask, addr):
+def service_connection(ctrl, key, mask, addr):
     dprint("service_connection():", addr)
     sock = key.fileobj
     data = key.data
