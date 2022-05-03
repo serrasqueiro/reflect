@@ -41,7 +41,6 @@ def run_server(args):
 
 def do_listen(ctrl, addr: tuple):
     host, port = addr
-    status = "INI"
     lsock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     lsock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
     #print("Binding socket...", addr)
@@ -57,33 +56,15 @@ def do_listen(ctrl, addr: tuple):
     lsock.setblocking(False)
     ctrl.register(lsock, libserver.EV_READ, data=None)
     #sel.register(lsock, selectors.EVENT_READ, data=None)
-    nclient = None
-
+    finito, iter_idx = False, 0
     try:
-        while status == "INI":
+        while not finito:
+            iter_idx += 1
             if not ctrl.is_server_up():
                 break
-            dprint("select()", NiceHost(addr))
+            dprint(f"select() #{iter_idx}", NiceHost(addr))
             events = ctrl.sel.select(timeout=None)
-            for key, mask in events:
-                if key.data is None:
-                    new_client = accept_wrapper(ctrl, key.fileobj)
-                    _, nclient = ctrl.register_client(new_client)
-                    continue
-                if nclient is None:
-                    time.sleep(1)
-                    continue
-                dealt = service_connection(ctrl, key, mask, addr)
-                dprint(f"key.data.outb {nclient}:", key.data.outb)
-                finito = dealt.endswith(".\n")
-                shown = dealt.replace("\n", "\\n")
-                print(f"::: {nclient} done? {finito}\n" + shown, end="<<<\n\n")
-                if finito:
-                    dprint(f"Closed select for client: {nclient}")
-                    is_ok = ctrl.closedown_last()
-                    assert is_ok, f"Failed to close {nclient}"
-                    status = "OUT"
-                    break
+            finito, _ = process_events(ctrl, events, addr)
     except KeyboardInterrupt:
         print("\n... Caught keyboard interrupt, exiting")
     finally:
@@ -91,6 +72,39 @@ def do_listen(ctrl, addr: tuple):
         ctrl.server_shutdown()
     return True
 
+def process_events(ctrl, events, addr):
+    """
+    :param ctrl: control object
+    :param events:  select() events
+    :param addr: just the server information
+    :return:
+    """
+    for key, mask in events:
+        #nclient = ctrl.clients.last_client()
+        psock, fdclient, iomask, pmsg = key
+        if key.data is None:
+            new_client = accept_wrapper(ctrl, key.fileobj)
+            _, nclient = ctrl.register_client(new_client)
+            continue
+        clnt_tup = pmsg._address
+        idx, nclient = ctrl.get_client(clnt_tup)
+        if nclient is None:
+            time.sleep(1)
+            continue
+        dealt = service_connection(ctrl, key, mask, addr, nclient)
+        tup = nclient.lastly()[0]
+        shown = (psocks.libcommon.stamp_string(tup[0]), f"{tup[1]}byte(s)")
+        dprint("stats:", shown)
+        dprint(f"key.data.outb {nclient}:", key.data.outb)
+        finito = dealt.endswith(".\n")
+        shown = dealt.replace("\n", "\\n")
+        print(f"::: {nclient} done? {finito}\n" + shown, end="<<<\n\n")
+        if finito:
+            dprint(f"Closed select for client: {nclient}")
+            is_ok = ctrl.closedown(idx)
+            assert is_ok, f"Failed to close {nclient}"
+            return finito, "OUT"
+    return False, "INI"
 
 def accept_wrapper(ctrl, sock):
     """ TCP socket accept wrapper """
@@ -105,20 +119,21 @@ def accept_wrapper(ctrl, sock):
     return new_client
 
 
-def service_connection(ctrl, key, mask, addr):
+def service_connection(ctrl, key, mask, addr, nclient):
     dprint("service_connection():", addr)
     sock = key.fileobj
     data = key.data
     if mask & libserver.EV_READ:
         recv_data = sock.recv(1024)  # Should be ready to read
+        nclient.connect_read(len(recv_data))
         if recv_data:
             to_str = recv_data.decode("ascii").replace("\r", "")
             data.outb += bytes(to_str, encoding="ascii")
             # ... or data.outb.decode("ascii").endswith("\n.\n")
             return to_str
         dprint(f"Closing connection to {NiceHost(addr)}")
-        ctrl.sel.unregister(sock)
-        sock.close()
+        ctrl.closed_client(sock, nclient)
+        #sock.close()
     if mask & libserver.EV_WRITE:
         if data.outb:
             dprint(f"Echoing {data.outb!r} {NiceHost(addr)}")

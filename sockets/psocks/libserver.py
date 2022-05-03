@@ -25,6 +25,23 @@ class Control():
         self.state = "REG"
         return self._registry(conn, sels, data)
 
+    def closed_client(self, sock, nclient=None):
+        """ Unregister socket within default selector,
+        and cleans up client.
+        """
+        assert sock
+        self.sel.unregister(sock)
+        if nclient is None:
+            return False
+        self.clients.cleanup_client(nclient)
+        return True
+
+    def get_client(self, nclient:tuple):
+        if not nclient:
+            return None
+        pair = self.clients.get_client_from_tup(nclient)
+        return pair
+
     def server_shutdown(self):
         assert self.state == "REG", f"Invalid server state: {self.state}"
         self.state = "STT"
@@ -49,20 +66,50 @@ class TabledClients():
         self.name = name
         self._idx = 0
         self._seq = []
+        self._hashed_client = {}
+
+    @staticmethod
+    def hash_ip_port(tup) -> str:
+        """ tup is ("address", (int)port)) """
+        assert isinstance(tup[1], int)
+        ip_port = f"{tup[0]}+{tup[1]}"
+        return ip_port
+
+    def get_client_from_tup(self, nclient):
+        idx = self._hashed_client.get(TabledClients.hash_ip_port(nclient))
+        if idx is None:
+            return (None, None)
+        return self._seq[idx]
 
     def push(self, nclient) -> list:
         self._idx += 1
         pair = [self._idx, nclient]
+        id_list = len(self._seq)
         self._seq.append(pair)
+        self._hashed_client[TabledClients.hash_ip_port(nclient.address())] = id_list
         return pair
+
+    def cleanup_client(self, nclient):
+        ip_port = TabledClients.hash_ip_port(nclient.address())
+        idx = self._hashed_client.get(ip_port)
+        if idx is None:
+            return False
+        del self._seq[idx]
+        del self._hashed_client[ip_port]
+        return True
+
+    def last_client(self):
+        if not self._seq:
+            return None
+        return self._seq[-1][1]
 
     def closedown(self, idx) -> bool:
         if not self._seq:
             return False
-        last = self._seq[-1]
-        _, nclient = last
+        nclient = self._seq[idx]
         nclient.closedown()
-        del self._seq[-1]
+        # Missing: delete _hashed_client
+        del self._seq[idx]
         return True
 
 class Message():

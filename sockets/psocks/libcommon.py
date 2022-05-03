@@ -4,6 +4,7 @@
 """
 
 import socket
+import time
 
 debug = 0
 
@@ -39,18 +40,42 @@ class NiceClient(NiceHost):
     def __init__(self, addr=None, name="", rdns=False):
         super().__init__(addr, name)
         self.sock = None
+        self._time = simple_stamp()
+        self._last_reads, self._last_writes = [0, 0], [0, 0]
 
     def closedown(self):
         """ Shutdown socket
         """
         if self.sock is None:
             return False
-        #self.sock.shutdown(socket.SHUT_RDWR)
+        self.sock.shutdown(socket.SHUT_RDWR)
         self.sock.close()
         del self.sock
         self.sock = None
         return True
 
+    def connect_read(self, size:int) -> bool:
+        self._last_reads = [simple_stamp(), size]
+        return size > 0
+
+    def connect_write(self, size:int) -> bool:
+        self._last_writes = [simple_stamp(), size]
+        return size > 0
+
+    def since(self):
+        return self._time
+
+    def lastly(self):
+        return self._last_reads, self._last_writes
+
+def simple_stamp() -> int:
+    return int(time.time())
+
+def stamp_string(clk_time) -> str:
+    atime = clk_time
+    dttm = time.localtime(atime)
+    astr = time.strftime("%Y-%m-%d %H:%M:%S", dttm)
+    return astr
 
 def dprint(*kwargs, **args):
     if debug <= 0:
