@@ -43,12 +43,14 @@ class NiceClient(NiceHost):
         self._time = simple_stamp()
         self._last_reads, self._last_writes = [0, 0], [0, 0]
 
-    def closedown(self):
-        """ Shutdown socket
+    def closedown(self, shut_up=False):
+        """ Shutdown socket - shut_up=True for servers closing client's connections.
         """
+        assert isinstance(shut_up, bool)
         if self.sock is None:
             return False
-        self.sock.shutdown(socket.SHUT_RDWR)
+        if shut_up:
+            self.sock.shutdown(socket.SHUT_RDWR)
         self.sock.close()
         del self.sock
         self.sock = None

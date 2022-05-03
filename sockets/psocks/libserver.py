@@ -57,9 +57,6 @@ class Control():
         new = self.clients.push(nclient)
         return new
 
-    def closedown_last(self) -> bool:
-        return self.clients.closedown(-1)
-
 class TabledClients():
     """ List of tabled clients """
     def __init__(self, name=""):
@@ -109,6 +106,18 @@ class TabledClients():
         nclient = self._seq[idx]
         nclient.closedown()
         # Missing: delete _hashed_client
+        del self._seq[idx]
+        return True
+
+    def force_closedown(self, idx=None) -> bool:
+        """ Forces shutdown for one, or all. """
+        if idx is None:
+            for idx, nclient in self._seq:
+                nclient.closedown(shut_up=True)
+            self._seq, self._hashed_client = [], {}
+            return True
+        _, nclient = self._seq[idx]
+        nclient.closedown(shut_all=True)
         del self._seq[idx]
         return True
 

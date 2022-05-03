@@ -101,8 +101,9 @@ def process_events(ctrl, events, addr):
         print(f"::: {nclient} done? {finito}\n" + shown, end="<<<\n\n")
         if finito:
             dprint(f"Closed select for client: {nclient}")
-            is_ok = ctrl.closedown(idx)
-            assert is_ok, f"Failed to close {nclient}"
+            is_ok = ctrl.clients.force_closedown(idx)
+            if not is_ok:
+                print(f"Already closed: {nclient}")
             return finito, "OUT"
     return False, "INI"
 
@@ -127,11 +128,13 @@ def service_connection(ctrl, key, mask, addr, nclient):
         recv_data = sock.recv(1024)  # Should be ready to read
         nclient.connect_read(len(recv_data))
         if recv_data:
-            to_str = recv_data.decode("ascii").replace("\r", "")
+            to_str, err_msg = decode_input(recv_data)
             data.outb += bytes(to_str, encoding="ascii")
             # ... or data.outb.decode("ascii").endswith("\n.\n")
+            if err_msg:
+                print("WARN:", err_msg)
             return to_str
-        dprint(f"Closing connection to {NiceHost(addr)}")
+        dprint(f"Closing connection {NiceHost(addr)} from {nclient}")
         ctrl.closed_client(sock, nclient)
         #sock.close()
     if mask & libserver.EV_WRITE:
@@ -141,6 +144,19 @@ def service_connection(ctrl, key, mask, addr, nclient):
             data.outb = data.outb[sent:]
     return ""
 
+def decode_input(data) -> tuple:
+    """
+    Returns simplified decoded input
+    :param data: bytes
+    :return: tuple of string and error
+    """
+    err_msg = ""
+    try:
+        astr = data.decode("ascii").replace("\r", "")
+        return astr, err_msg
+    except UnicodeDecodeError as msg:
+        err_msg = msg
+    return "", err_msg
 
 ### Main script ###
 if __name__ == "__main__":
