@@ -6,6 +6,7 @@
 # pylint: disable=missing-function-docstring
 
 import selectors
+from psocks.libcommon import dprint
 
 EV_READ = selectors.EVENT_READ
 EV_WRITE = selectors.EVENT_WRITE
@@ -116,10 +117,22 @@ class TabledClients():
                 nclient.closedown(shut_up=True)
             self._seq, self._hashed_client = [], {}
             return True
+        dprint(f"Closing down connection #{idx}, seq: {self.info_list()}")
+        if not self._seq:
+            return False
+        if idx > 0:
+            idx -= 1
         _, nclient = self._seq[idx]
-        nclient.closedown(shut_all=True)
+        nclient.closedown()
         del self._seq[idx]
         return True
+
+    def info_list(self) -> list:
+        """ Returns a triple: index, client index, client IP:port
+        """
+        seq = self._seq
+        shown = [(idx, seq[0], str(seq[1])) for idx, seq in enumerate(seq, 1)]
+        return shown
 
 class Message():
     """ basic Message class

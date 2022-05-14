@@ -6,6 +6,7 @@
 import socket
 import time
 
+#debug = 1
 debug = 0
 
 
