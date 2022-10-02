@@ -1,0 +1,6 @@
+#export PYTHONPATH=~/anaceo/reflect/sockets
+export PYTHONPATH=$(dirname $(pwd))
+
+# Server run:
+python app-server.py
+
